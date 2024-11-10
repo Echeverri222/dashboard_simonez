@@ -65,8 +65,14 @@ sales_data = [
 # Helper functions
 @st.cache_data(ttl=3600)
 def download_data(tickers):
-    data = yf.download(tickers, period='1d')['Adj Close']
-    return data
+    try:
+        data = yf.download(tickers, period='1d')['Adj Close']
+        if data.empty:
+            st.warning(f"No data available for some tickers: {tickers}")
+        return data
+    except Exception as e:
+        st.error(f"Error downloading data: {str(e)}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def get_fx_rate():
@@ -123,36 +129,73 @@ current_prices_usa = download_data(portfolio_usa)
 fx_rate_hkd_to_usd = get_fx_rate() or 0.128
 
 def calculate_portfolio_metrics():
-    total_invested_value_hk_usd = sum(
-        shares_owned_hk[ticker] * purchase_prices_hk[ticker] * fx_rate_hkd_to_usd 
-        for ticker in portfolio_hk
-    )
-    total_current_value_hk_usd = sum(
-        shares_owned_hk[ticker] * current_prices_hk[ticker].iloc[-1] * fx_rate_hkd_to_usd 
-        if isinstance(current_prices_hk[ticker], pd.Series) 
-        else shares_owned_hk[ticker] * current_prices_hk[ticker] * fx_rate_hkd_to_usd 
-        for ticker in portfolio_hk
-    )
-    
-    total_invested_value_usa = sum(
-        shares_owned_usa[ticker] * purchase_prices_usa[ticker] 
-        for ticker in portfolio_usa
-    )
-    total_current_value_usa = sum(
-        shares_owned_usa[ticker] * current_prices_usa[ticker].iloc[-1] 
-        if isinstance(current_prices_usa[ticker], pd.Series) 
-        else shares_owned_usa[ticker] * current_prices_usa[ticker] 
-        for ticker in portfolio_usa
-    )
-    
-    return {
-        'total_invested': total_invested_value_hk_usd + total_invested_value_usa,
-        'total_current_hk': total_current_value_hk_usd,
-        'total_current_usa': total_current_value_usa,
-        'total_current': total_current_value_hk_usd + total_current_value_usa,
-        'performance_hk': (total_current_value_hk_usd / total_invested_value_hk_usd - 1) * 100,
-        'performance_usa': (total_current_value_usa / total_invested_value_usa - 1) * 100
-    }
+    try:
+        # Calculate HK portfolio values with error handling
+        total_invested_value_hk_usd = sum(
+            shares_owned_hk[ticker] * purchase_prices_hk[ticker] * fx_rate_hkd_to_usd 
+            for ticker in portfolio_hk
+        )
+        
+        total_current_value_hk_usd = 0
+        for ticker in portfolio_hk:
+            try:
+                price = current_prices_hk[ticker]
+                if isinstance(price, pd.Series) and not price.empty:
+                    current_price = price.iloc[-1]
+                else:
+                    current_price = price
+                total_current_value_hk_usd += shares_owned_hk[ticker] * current_price * fx_rate_hkd_to_usd
+            except (IndexError, AttributeError, KeyError):
+                st.warning(f"Failed to get current price for {ticker}. Using purchase price instead.")
+                total_current_value_hk_usd += shares_owned_hk[ticker] * purchase_prices_hk[ticker] * fx_rate_hkd_to_usd
+        
+        # Calculate USA portfolio values with error handling
+        total_invested_value_usa = sum(
+            shares_owned_usa[ticker] * purchase_prices_usa[ticker] 
+            for ticker in portfolio_usa
+        )
+        
+        total_current_value_usa = 0
+        for ticker in portfolio_usa:
+            try:
+                price = current_prices_usa[ticker]
+                if isinstance(price, pd.Series) and not price.empty:
+                    current_price = price.iloc[-1]
+                else:
+                    current_price = price
+                total_current_value_usa += shares_owned_usa[ticker] * current_price
+            except (IndexError, AttributeError, KeyError):
+                st.warning(f"Failed to get current price for {ticker}. Using purchase price instead.")
+                total_current_value_usa += shares_owned_usa[ticker] * purchase_prices_usa[ticker]
+        
+        # Calculate performance metrics with safeguards against division by zero
+        performance_hk = 0 if total_invested_value_hk_usd == 0 else (
+            (total_current_value_hk_usd / total_invested_value_hk_usd - 1) * 100
+        )
+        
+        performance_usa = 0 if total_invested_value_usa == 0 else (
+            (total_current_value_usa / total_invested_value_usa - 1) * 100
+        )
+        
+        return {
+            'total_invested': total_invested_value_hk_usd + total_invested_value_usa,
+            'total_current_hk': total_current_value_hk_usd,
+            'total_current_usa': total_current_value_usa,
+            'total_current': total_current_value_hk_usd + total_current_value_usa,
+            'performance_hk': performance_hk,
+            'performance_usa': performance_usa
+        }
+    except Exception as e:
+        st.error(f"Error calculating portfolio metrics: {str(e)}")
+        # Return default values in case of error
+        return {
+            'total_invested': 0,
+            'total_current_hk': 0,
+            'total_current_usa': 0,
+            'total_current': 0,
+            'performance_hk': 0,
+            'performance_usa': 0
+        }
 
 # Calculate metrics
 metrics = calculate_portfolio_metrics()
