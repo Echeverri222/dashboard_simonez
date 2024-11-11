@@ -227,7 +227,7 @@ with container:
     with col1:
         st.metric(
             "Total Return",
-            f"{((metrics['total_current'] / metrics['total_invested'] - 1) * 100):.2f}%",
+            f"{(((metrics['total_current'].sum() if isinstance(metrics['total_current'], pd.Series) else metrics['total_current']) / (metrics['total_invested'].sum() if isinstance(metrics['total_invested'], pd.Series) else metrics['total_invested'])) - 1) * 100:.2f}%",
             delta=None
         )
 
